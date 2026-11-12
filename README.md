@@ -1,8 +1,8 @@
 # 🍃 Spring Boot 전체 실습 마스터 가이드 & 개발 백서
 
 > **저장소**: [https://github.com/minjae0529-blip/spring-boot.git](https://github.com/minjae0529-blip/spring-boot.git)  
-> 이 문서는 `study01` (기초 & 정적 서빙), `study02` (RESTful CRUD & JSON 직렬화), `study03` (도메인형 3-Tier 아키텍처 & MyBatis 연동)까지 학습한 모든 실습 내용을 총정리한 공식 개발 백서입니다.  
-> **"왜 이 코드를 작성해야 하는지(이유)"**, **"어떤 원리로 동작하는지"**를 세세하게 기록하여 다음 실습이나 실무에서도 혼자서 완벽하게 구현할 수 있도록 작성되었습니다.
+> 이 문서는 `study01` (기초 & 서블릿 비교), `study02` (RESTful CRUD & JSON 변환), `study03` (도메인형 3-Tier 아키텍처 & MyBatis 연동)까지 학습한 모든 실습 내용을 총정리한 공식 개발 백서입니다.  
+> **"왜 이 코드를 작성해야 하는지(이유)"**, **"각 클래스가 어떤 역할을 하며 내부 코드가 어떻게 작동하는지"**, 그리고 **"실습 중 질문했던 핵심 개념(Q&A)"**을 세세하게 기록했습니다.
 
 ---
 
@@ -30,8 +30,8 @@
    * **왜 넣어야 하나요?**: 톰캣 서버를 별도로 설치/세팅하지 않아도 스프링 부트 실행만으로 8080 포트 웹 서버가 열리며, 브라우저의 HTTP 요청(`GET`, `POST` 등)을 받아 처리하는 컨트롤러 환경을 만듭니다.
 
 2. **`Lombok` (`lombok`)**
-   * **역할**: 자바의 고질적인 보일러플레이트(Getter, Setter, toString, 생성자 등) 자동 생성
-   * **왜 넣어야 하나요?**: 필드가 10개인 클래스에서 수십 줄의 코드를 작성할 필요 없이 `@Data`, `@NoArgsConstructor`, `@AllArgsConstructor` 어노테이션 한 줄로 해결해 가독성을 극대화합니다.
+   * **역할**: 자바의 보일러플레이트(Getter, Setter, toString, 생성자 등) 자동 생성
+   * **왜 넣어야 하나요?**: 필드가 10개인 클래스에서 수십 줄의 코드를 일일이 작성할 필요 없이 `@Data`, `@NoArgsConstructor`, `@AllArgsConstructor` 어노테이션 한 줄로 해결해 가독성을 극대화합니다.
 
 3. **`Spring Boot DevTools`**
    * **역할**: 코드 변경 시 애플리케이션 자동 재시작(Live Reload)
@@ -117,109 +117,187 @@ sequenceDiagram
   (DB 원본 뼈대)        (입력 포장 상자)         (SQL & 키 수령)        (핵심 요리/로직)          (출력 포장 상자)          (접수 창구/URL)
 ```
 
-1. **Step 1: Entity (`domain/{기능}/entity/`)**
-   * **이유**: DB 테이블 컬럼과 1:1로 매핑되는 자바 원본 객체입니다. 데이터의 기준이 되므로 가장 먼저 만듭니다.
-2. **Step 2: Request DTO (`domain/{기능}/dto/`)**
-   * **이유**: 클라이언트가 보낼 값만 안전하게 정의합니다. 아직 DB에 들어가기 전이므로 PK(`id`)는 제외합니다. 엔티티로 바꾸는 `toEntity()` 메서드를 내장합니다.
-3. **Step 3: Mapper & XML (`domain/{기능}/mapper/`, `resources/mapper/`)**
-   * **이유**: DB와 대화하는 SQL 창구입니다. `useGeneratedKeys="true"`로 auto_increment 번호를 회수합니다.
-4. **Step 4: Service (`domain/{기능}/service/`)**
-   * **이유**: 비즈니스 로직을 처리하는 주방장입니다. DTO ➔ Entity 변환 ➔ DB 저장 ➔ Response DTO 변환을 총괄합니다.
-5. **Step 5: Response DTO (`domain/{기능}/dto/`)**
-   * **이유**: DB 저장이 완료된 후 발급된 PK를 포함해 클라이언트에게 보여줄 필드만 선별해 응답합니다.
-6. **Step 6: Controller (`domain/{기능}/controller/`)**
-   * **이유**: URL 주소를 열고 HTTP 메서드를 매핑하여 손님을 맞이합니다.
+---
+
+## 🌳 3부. 패키지별 클래스 구성 및 코드 작동 원리 상세 분석
+
+현재 인텔리제이의 `study03` 패키지 구조 그대로 각 클래스가 무슨 일을 하고 코드가 어떻게 돌아가는지 세세하게 분석합니다.
+
+```text
+📁 study03/src/main/java/com/korai/study03/
+├── 📄 Study03Application.java
+└── 📁 domain/
+    ├── 📁 customer/        (고객 도메인 - 등록 C)
+    ├── 📁 restaurant/      (식당 도메인 - 등록 C)
+    ├── 📁 customerCoupon/  (고객 쿠폰 도메인 - 조회 R)
+    └── 📁 coupon/          (쿠폰 마스터 도메인 - 등록 C)
+```
 
 ---
 
-## 📂 3부. 프로젝트별 상세 구현 & 코드 의미 분석
+### 🗂️ 1. 고객 도메인 (`domain/customer/`)
+
+#### ① `entity/Customer.java` (DB 원본 엔티티)
+* **역할**: MySQL의 `customers` 테이블과 1:1로 매핑되는 자바 원본 뼈대입니다.
+* **작동 원리**:
+  * `@Data`, `@NoArgsConstructor`, `@AllArgsConstructor`: MyBatis가 DB에서 레코드를 가져와 객체를 만들 때 필요한 기본 생성자와 Getter/Setter를 지원합니다.
+  * `customerId`: DB의 `customer_id` PK와 매핑됩니다.
+  * `toCustomerResponse()`: DB 저장이 끝난 후 발급된 `customerId`를 포함하여 응답 DTO(`CustomerResponse`) 객체로 변환하여 리턴합니다.
+
+#### ② `dto/CustomerCreateRequest.java` (요청 DTO)
+* **역할**: 클라이언트(Swagger/웹)가 POST 요청 시 JSON 본문에 실어 보내는 데이터만 담는 포장 상자입니다.
+* **작동 원리**:
+  * 아직 등록 전이므로 DB가 발급해 줄 `customerId`는 필드에 없습니다.
+  * `toCustomer()`: 클라이언트가 보낸 값에 `customerId = 0`과 `joinedAt = LocalDateTime.now()`를 조합하여 완벽한 `Customer` 엔티티 객체로 조립해 줍니다.
+
+#### ③ `dto/CustomerResponse.java` (응답 DTO)
+* **역할**: DB 저장이 완료된 후 클라이언트에게 200 OK와 함께 돌려줄 응답 포장 상자입니다.
+* **작동 원리**:
+  * DB `auto_increment`로 발급된 진짜 ID 번호(`id`)를 담아서 반환하며, 클라이언트 화면에 보여줄 데이터만 깔끔하게 전달합니다.
+
+#### ④ `mapper/CustomerMapper.java` & `resources/mapper/customer-mapper.xml`
+* **역할**: DB와 직접 대화하여 SQL을 실행하는 영속성 계층입니다.
+* **작동 원리**:
+  * `CustomerMapper`: `@Mapper` 어노테이션이 붙어 스프링이 구현체를 자동 생성합니다.
+  * `customer-mapper.xml`:
+    ```xml
+    <insert id="insert" useGeneratedKeys="true" keyProperty="customerId" parameterType="com.korai.study03.domain.customer.entity.Customer">
+        insert into customers
+        values (default, #{name}, #{phone}, #{email}, #{birthDate}, #{district}, #{address}, #{grade}, #{marketingAgreed}, #{joinedAt})
+    </insert>
+    ```
+    * `useGeneratedKeys="true"`: MySQL이 채번한 auto_increment 번호를 가져오겠다는 선언입니다.
+    * `keyProperty="customerId"`: 가져온 번호를 전달된 `Customer` 객체의 `customerId` 변수에 즉시 채워줍니다.
+
+#### ⑤ `service/CustomerService.java` (비즈니스 로직)
+* **역할**: 실제 등록 로직을 수행하는 주방장입니다.
+* **작동 원리**:
+  ```java
+  public CustomerResponse create(CustomerCreateRequest request){
+      Customer customer = request.toCustomer(); // 1. DTO -> Entity 변환 (ID=0)
+      customerMapper.insert(customer);          // 2. DB 저장 (customer 변수에 발급된 ID가 채워짐!)
+      return customer.toCustomerResponse();     // 3. Entity -> Response DTO 변환 후 리턴
+  }
+  ```
+
+#### ⑥ `controller/CustomerController.java` (웹 요청 접수처)
+* **역할**: 외부 웹 요청을 가장 먼저 받아 서비스로 연결해 주는 문지기입니다.
+* **작동 원리**:
+  * `@RequestMapping("/api/customers")`: 공통 URL 지정
+  * `@PostMapping`: POST 방식으로 들어온 요청을 처리
+  * `@RequestBody CustomerCreateRequest request`: HTTP 요청 본문(Body)에 담긴 JSON을 자바 객체로 변환하여 수신
+  * `customerService.create(request)`를 호출하고, 완성된 `CustomerResponse`를 반환하면 스프링이 JSON으로 직렬화하여 클라이언트에 200 OK 응답합니다.
 
 ---
 
-### 1. 📌 `study01` - 스프링 부트 기초 & 뷰/데이터 분리
+### 🗂️ 2. 식당 도메인 (`domain/restaurant/`)
 
-#### 🎯 핵심 개념 & 코드 의미
-* **서블릿과 스프링의 구조적 차이**:
-  * 서블릿: `doGet()`, `doPost()` 클래스 하나가 요청 1개를 전담
-  * 스프링: **메서드 하나가 요청 1개를 전담**하므로 하나의 컨트롤러 클래스에 수십 개의 API 메서드를 담을 수 있음
-* **`@Controller` vs `@RestController`**:
-  * `@Controller`: 메서드의 `return` 값을 **"HTML/JSP 화면 경로"**로 해석 (`return "/upload/index.html"`)
-  * `@ResponseBody`: `@Controller` 환경에서 특정 메서드만 화면이 아닌 **"순수 데이터(문자열/JSON)"**를 반환하도록 지시
-  * `@RestController`: `@Controller + @ResponseBody`의 합체형으로 클래스 내 모든 메서드가 데이터를 반환
-* **정적 자원(Static Resources) 경로 규칙**:
-  * `src/main/resources/static/` 폴더가 브라우저 웹 상의 루트(`/`)가 됨
-  * `static/upload/test.pdf` 파일은 `http://localhost:8080/upload/test.pdf`로 바로 접근 가능
+#### 클래스 구성 & 작동 원리
+* `Restaurant.java`: `restaurantId`, `openTime`, `closeTime`, `openedAt`, `isOpen` 등 식당 기본 정보 엔티티
+* `RestaurantCreateRequest.java`: 식당 등록 요청 DTO (`toRestaurant()` 변환 메서드 포함)
+* `RestaurantResponse.java`: 식당 등록 응답 DTO
+* `RestaurantMapper.java` & `restaurant-mapper.xml`: `insert into restaurants values (...)` 쿼리 실행
+* `RestaurantService.java`: DTO ➔ Entity 변환 ➔ INSERT ➔ Response DTO 변환 처리
+* `RestaurantController.java`: `POST /api/restaurants` 엔드포인트를 열어 등록 처리
 
 ---
 
-### 2. 📌 `study02` - RESTful API 기본 & JSON 자동 직렬화
+### 🗂️ 3. 고객 쿠폰 도메인 (`domain/customerCoupon/`) - [조회 R]
 
-#### 🎯 핵심 개념 & 코드 의미
-* **HTTP 4대 메서드 매핑 (CRUD)**:
-  * `@GetMapping`: 조회 (Read) - 브라우저 주소창에서 엔터 치면 기본 호출됨
-  * `@PostMapping`: 등록/생성 (Create) - 브라우저 주소창 입력 시 405 Method Not Allowed 발생 (Swagger/Postman 필요)
-  * `@PutMapping`: 전체 수정 (Update)
-  * `@DeleteMapping`: 삭제 (Delete)
-* **Jackson 라이브러리의 JSON 자동 변환 (직렬화)**:
-  * 스프링 부트는 컨트롤러가 Java 컬렉션을 반환하면 자동으로 JSON 규격으로 변환합니다:
-    * `List<String>` ➔ `["사과", "바나나", "포도"]` (JSON Array)
-    * `Map<String, Object>` ➔ `{"name": "홍길동", "age": 25}` (JSON Object)
-    * `List<Map<String, Object>>` ➔ `[{"id": 1, "name": "김철수"}, {"id": 2, "name": "이영희"}]` (JSON Object Array)
-
----
-
-### 3. 📌 `study03` - 실무 도메인 주도 아키텍처 & MyBatis 연동
-
-#### 🗂️ 도메인 1: 고객 (`Customer`) - [신규 등록 POST]
-* **목적**: 신규 고객 정보를 JSON으로 받아 DB에 INSERT하고, 발급된 `customerId`를 포함해 응답
-* **핵심 구현 흐름 & 코드 이유**:
-  1. **`CustomerCreateRequest.java`**:
-     * 사용자가 입력할 이름, 연락처, 생년월일 등만 선언 (PK 제외)
-     * `toCustomer()` 메서드: `new Customer(0, name, ..., LocalDateTime.now())` 로 변환하여 초기 ID=0과 가입일시를 세팅
-  2. **`customer-mapper.xml`**:
-     * `useGeneratedKeys="true" keyProperty="customerId"`: MySQL이 채번한 PK를 `Customer` 객체에 즉시 주입
-  3. **`CustomerService.java`**:
-     * `Customer customer = request.toCustomer();` 로 만든 객체를 `customerMapper.insert(customer);` 에 **그대로 전달**해야 ID가 채워짐
-  4. **`CustomerResponse.java`**:
-     * `toCustomerResponse()`로 발급된 ID를 담아 클라이언트에 200 OK로 반환
-
-#### 🗂️ 도메인 2: 식당 (`Restaurant`) - [신규 등록 POST]
-* **목적**: 음식점 기본 정보 및 영업시간, 운영 상태 등록
-* **해결한 핵심 이슈**:
-  * `openTime`(영업 시작 시간)과 `isOpen`(영업 중 여부)의 이름 충돌 해결
-  * 롬복은 `boolean isOpen;`의 getter를 `isOpen()`으로 만들어 JSON에서 `open`으로 축약하므로 변수명을 명확히 분리 매핑
-
-#### 🗂️ 도메인 3: 고객 쿠폰 (`CustomerCoupon`) - [목록 조회 & 단건 조회]
-* **목적**: 특정 고객이 보유한 쿠폰 전체 목록 및 특정 쿠폰 상세 조회
-* **핵심 구현 흐름 & 코드 이유**:
-  1. **전체 목록 조회 (`GET /api/customers/{customerId}/coupons`)**:
-     * `@PathVariable int customerId`: URL 경로에서 고객 번호를 추출
-     * **메서드 참조 (`::`) 스트림 변환**:
-       ```java
-       return customerCouponMapper.findAll(customerId)
-               .stream()
-               .map(CustomerCoupon::toCustomerCouponResponse) // c -> c.toCustomerCouponResponse() 축약
-               .toList();
-       ```
-  2. **단건 조회 (`GET /api/customers/{customerId}/coupons/{customerCouponId}`)**:
-     * `@PathVariable int customerCouponId`: 특정 쿠폰 고유 번호를 받아 1건 조회 후 DTO 변환
-
-#### 🗂️ 도메인 4: 쿠폰 마스터 (`Coupon`) - [쿠폰 발행 템플릿 등록]
-* **목적**: 관리자가 새로운 할인 쿠폰(코드, 할인 금액, 최소 주문 금액 등)을 발행/등록
-* **핵심 구현 포인트**:
-  * `CouponCreateRequest`에서 서버가 채울 `createdAt` 제외
-  * `toCoupon()`과 `toCouponResponse()` 변환 메서드를 통한 객체 라이프사이클 확립
+#### 클래스 구성 & 작동 원리
+* `CustomerCoupon.java`: `customerCouponId`, `customerId`, `couponId`, `issuedAt`, `expiresAt`, `usedOrderId` 필드를 가진 엔티티
+* `CustomerCouponResponse.java`: 쿠폰 조회 결과를 담는 응답 DTO
+* `CustomerCouponMapper.java`:
+  * `List<CustomerCoupon> findAll(@Param("customerId") int customerId);`
+  * `CustomerCoupon findById(@Param("customerCouponId") int customerCouponId);`
+* `customer-coupon-mapper.xml`:
+  * `<select id="findAll">` : `where customer_id = #{customerId}` 조건으로 해당 고객의 모든 쿠폰 조회
+  * `<select id="findById">` : `where customer_coupon_id = #{customerCouponId}` 조건으로 단건 조회
+* `CustomerCouponService.java`:
+  * **전체 목록 조회**:
+    ```java
+    public List<CustomerCouponResponse> getAll(int customerId){
+        return customerCouponMapper.findAll(customerId)
+                .stream()
+                .map(CustomerCoupon::toCustomerCouponResponse) // 메서드 참조(::)로 DTO 변환
+                .toList();
+    }
+    ```
+  * **단건 조회**:
+    ```java
+    public CustomerCouponResponse getId(int customerCouponId){
+        CustomerCoupon coupon = customerCouponMapper.findById(customerCouponId);
+        if (coupon == null) return null;
+        return coupon.toCustomerCouponResponse();
+    }
+    ```
+* `CustomerCouponController.java`:
+  * `GET /api/customers/{customerId}/coupons` ➔ `getAll(@PathVariable int customerId)`
+  * `GET /api/customers/{customerId}/coupons/{customerCouponId}` ➔ `getId(@PathVariable int customerCouponId)`
 
 ---
 
-## 🔍 4부. 파라미터 어노테이션 완전 정복
+### 🗂️ 4. 쿠폰 마스터 도메인 (`domain/coupon/`) - [신규 등록 C]
 
-| 어노테이션 | 적용 계층 | 사용 예시 URL / 코드 | 왜 이 어노테이션을 쓰는가? |
-| :--- | :---: | :--- | :--- |
-| **`@RequestBody`** | **컨트롤러** | `POST /api/customers`<br>`@RequestBody CustomerCreateRequest req` | • 클라이언트가 HTTP 본문(Body)에 실어 보낸 **JSON 데이터**를 자바 DTO 객체로 변환해 채워줌<br>• 없으면 필드가 전부 `null`이 됨 |
-| **`@PathVariable`** | **컨트롤러** | `GET /api/customers/`**`15`**<br>`@GetMapping("/{id}") (@PathVariable int id)` | • **URL 주소 경로에 포함된 고유 식별자(PK)**를 꺼내올 때 사용<br>• 특정 단건 조회, 단건 삭제 등에 필수 |
-| **`@RequestParam`** | **컨트롤러** | `GET /api/customers?`**`grade=VIP&page=1`**<br>`@RequestParam String grade` | • 주소창 뒤의 **쿼리스트링(?key=value)**으로 넘어온 검색어, 필터, 페이징 값을 꺼낼 때 사용 |
-| **`@Param`** | **MyBatis 매퍼** | `List<Coupon> find(@Param("cid") int id)` | • 자바 매퍼 인터페이스의 변수를 **XML 쿼리의 `#{cid}` 파라미터로 연결하는 이름표** 역할 |
+#### 클래스 구성 & 작동 원리
+* `Coupon.java`: `id`, `code`, `name`, `discountType`, `discountValue`, `maxDiscount`, `minOrderAmount`, `validDays`, `isActive`, `createdAt` 엔티티
+* `CouponCreateRequest.java`: 신규 쿠폰 템플릿 등록 DTO (`toCoupon()` 변환 메서드 포함)
+* `CouponResponse.java`: 쿠폰 등록 결과 응답 DTO
+* `CouponMapper.java` & `coupon-mapper.xml`: `insert into coupons values (...)` 쿼리 실행
+* `CouponService.java`: 쿠폰 비즈니스 로직
+* `CouponController.java`: `POST /api/coupons` 요청 처리
+
+---
+
+## ❓ 4부. 실습하며 질문했던 핵심 개념 총정리 (Q&A)
+
+### Q1. `@RequestBody`는 왜 들어가며, JSON 말고 다른 데이터는 어떻게 받나요?
+* **이유**: 클라이언트(React, Vue, 모바일 앱 등)는 데이터를 HTTP 본문(Body)에 **JSON 글자** 형태로 실어 보냅니다. 스프링에게 **"본문에 들어있는 JSON을 읽어서 자바 DTO 객체로 변환해 줘!"** 라고 지시하는 어노테이션이 바로 `@RequestBody`입니다.
+* **JSON이 아닐 때 사용하는 어노테이션 비교**:
+  * **`@RequestBody`**: HTTP Body의 JSON 데이터 (REST API, 프론트엔드 전송)
+  * **`@RequestParam`**: 주소창 뒤 물음표 쿼리스트링 (`?category=한식&page=1`) ➔ 검색, 필터링, 페이징
+  * **`@PathVariable`**: URL 주소 경로 자체에 포함된 고유 ID (`/api/customers/15`) ➔ 단건 조회/삭제
+  * **`@ModelAttribute`**: HTML `<form>` 전송 및 파일 업로드 (`multipart/form-data`)
+
+---
+
+### Q2. `CreateRequest`에는 왜 `int id`를 명시하지 않나요?
+* **이유**: 신규 등록(Create) 시점에는 **아직 ID가 세상에 존재하지 않기 때문**입니다.
+* 은행에서 통장을 신규 개설할 때 신청서에 이름과 전화번호는 적지만 "계좌번호"는 비워두는 것과 같습니다. 계좌번호는 전산(DB)이 `auto_increment`로 발급해 주는 번호이므로, 손님이 보낼 필요가 없어 `CreateRequest`에서는 제외합니다. (발급된 ID는 `Response`에만 포함됩니다.)
+
+---
+
+### Q3. `::` (이중 콜론)은 무엇인가요?
+* **정의**: 자바 8에서 도입된 **"메서드 참조 (Method Reference)"** 문법입니다.
+* **역할**: 람다식(`->`)을 더 짧고 간결하게 쓰기 위한 문법적 단축키입니다.
+  * **람다식**: `list.stream().map(c -> c.toCustomerResponse()).toList();`
+  * **메서드 참조**: `list.stream().map(Customer::toCustomerResponse).toList();`
+  * 의미: *"Customer 클래스에 있는 `toCustomerResponse` 메서드를 그대로 실행해서 변환해라!"*
+
+---
+
+### Q4. `Param`과 `PathVariable`의 차이는 무엇인가요?
+* **`@PathVariable` (스프링 컨트롤러)**: URL 경로 자체에 들어있는 값 (`/api/customers/{customerId}`)
+* **`@RequestParam` (스프링 컨트롤러)**: 주소창 뒤의 물음표 쿼리스트링 (`/api/customers?grade=VIP`)
+* **`@Param` (MyBatis 매퍼)**: 자바 매퍼 인터페이스의 파라미터를 **XML SQL의 `#{...}`로 연결해 주는 이름표**
+
+---
+
+### Q5. 변환 메서드(`toEntity`, `toResponse`)는 왜 만드나요?
+* **이유**: 클라이언트가 보낸 **신청서(`Request DTO`)**와 DB에 들어가는 **원본(`Entity`)**, 그리고 클라이언트에게 줄 **영수증(`Response DTO`)**은 서로 생김새(필드 구성)가 다릅니다.
+* 변환 메서드가 없으면 Service에서 매번 수십 줄의 Getter/Setter 노가다 코드를 작성해야 하지만, 변환 메서드를 DTO와 Entity 안에 만들어 두면 Service 코드가 단 3줄로 깔끔해집니다:
+  ```java
+  Coupon coupon = request.toCoupon();       // 1. DTO -> Entity 변환
+  couponMapper.insert(coupon);              // 2. DB 저장
+  return coupon.toCouponResponse();         // 3. Entity -> Response DTO 변환 후 리턴
+  ```
+
+---
+
+### Q6. 왜 Swagger나 JSON에서 `open` 변수가 사라지거나 충돌이 났을까요?
+* **이유**: 자바와 롬복(Lombok)은 `boolean` 타입의 Getter를 만들 때 `getIsOpen()`이 아니라 **앞의 `is`를 뗀 `isOpen()`** 형태로 만듭니다.
+* 그 결과 `LocalTime open;` (영업시간)과 `boolean isOpen;` (영업여부) 둘 다 JSON 변환기(Jackson)가 볼 때는 똑같이 `"open"`이라는 이름으로 해석하여 서로 덮어씌워지는 충돌이 발생한 것입니다.
+* **해결**: `boolean opened;` 처럼 이름을 명확히 분리하거나, `@JsonProperty("isOpen")`을 붙여 해결합니다.
 
 ---
 
@@ -249,18 +327,7 @@ sequenceDiagram
 현재 작성된 모든 코드와 문서를 GitHub 저장소로 푸시하는 명령어입니다:
 
 ```bash
-# 1. 변경된 모든 파일 스테이징
 git add .
-
-# 2. 커밋 메시지 작성
-git commit -m "feat: complete spring boot study (study01, study02, study03 with guides)"
-
-# 3. 원격 저장소 등록 (최초 1회)
-git remote add origin https://github.com/minjae0529-blip/spring-boot.git
-
-# 4. 기본 브랜치 이름을 main으로 지정
-git branch -M main
-
-# 5. 원격 저장소로 푸시
-git push -u origin main
+git commit -m "docs: update comprehensive README with package details, class workflows, and Q&A"
+git push origin main
 ```
