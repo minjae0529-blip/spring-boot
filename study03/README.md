@@ -429,7 +429,85 @@ sequenceDiagram
 
 ---
 
-## 🚨 6부. 실습 중 자주 겪는 4대 에러 & 해결 체크리스트
+
+---
+
+## 🏛️ 6부. @Component 계층 구조와 IoC 컨테이너 (Bean 등록 원리)
+
+스프링 프레임워크의 가장 핵심이 되는 **`@Component` 패밀리 어노테이션**들과 **IoC 컨테이너의 스캔 및 등록 원리**입니다.
+
+### 1. 🌳 @Component 상속/포함 관계 (어노테이션 계층도)
+
+스프링에서 사용되는 `@Controller`, `@RestController`, `@Service`, `@Repository`, `@Configuration`은 모두 내부를 뜯어보면 **`@Component`를 상속(포함)**하고 있습니다.
+
+```mermaid
+graph TD
+    Component["<b>@Component</b><br/>(스프링 Bean 등록의 최상위 메타 어노테이션)"]
+    
+    Controller["<b>@Controller / @RestController</b><br/>(Presentation Layer / 웹 요청 접수)"]
+    Service["<b>@Service</b><br/>(Business Layer / 비즈니스 로직)"]
+    Repository["<b>@Repository / @Mapper</b><br/>(Data Access Layer / DB 영속성)"]
+    Config["<b>@Configuration</b><br/>(Config Layer / 스프링 환경설정 및 수동 Bean 등록)"]
+
+    Component --> Controller
+    Component --> Service
+    Component --> Repository
+    Component --> Config
+
+    classDef comp fill:#1e293b,stroke:#38bdf8,stroke-width:3px,color:#ffffff;
+    classDef sub fill:#065f46,stroke:#34d399,stroke-width:2px,color:#ffffff;
+    
+    class Component comp;
+    class Controller,Service,Repository,Config sub;
+```
+
+---
+
+### 2. 📋 계층별 @Component 파생 어노테이션 비교표
+
+| 어노테이션 | 적용 계층 | 주요 역할 및 기능 | 왜 `@Component` 대신 특화 어노테이션을 쓸까? |
+| :--- | :---: | :--- | :--- |
+| **`@Controller`** | **Presentation** | • 웹 클라이언트(브라우저)의 HTTP 요청 접수<br>• 기본적으로 View(화면 경로)를 리턴 | • 스프링 MVC 프레임워크가 웹 컨트롤러로 특수 인식하여 URL 매핑(`@GetMapping` 등)을 활성화 |
+| **`@RestController`** | **Presentation** | • **`@Controller + @ResponseBody`**<br>• 모든 메서드가 화면이 아닌 순수 JSON 데이터 응답 | • RESTful API 전용 컨트롤러임을 명시하고 코드를 극적으로 단축 |
+| **`@Service`** | **Business** | • 핵심 비즈니스 로직(업무 규칙) 수행<br>• 트랜잭션 관리(`@Transactional`), DTO ↔ Entity 변환 | • 비즈니스 계층임을 명시하여 개발자 간 협업 가독성 증대 및 AOP 적용 용이 |
+| **`@Repository`** | **Data Access** | • DB와 직접 연결되어 데이터 저장/조회<br>• JPA EntityManager 또는 JDBC 처리 | • DB 접근 중 발생하는 **SQL 예외를 스프링의 통일된 DataAccessException으로 자동 변환(Exception Translation)**해줌 |
+| **`@Mapper`** | **Data Access** | • **MyBatis 전용** 데이터베이스 접근 인터페이스<br>• XML 쿼리문과 자바 메서드 자동 바인딩 | • MyBatis 라이브러리가 프록시 구현체를 생성하여 IoC 컨테이너에 자동 Bean 등록 |
+| **`@Configuration`** | **Configuration** | • 스프링 설정 정보를 정의하는 클래스<br>• 내부에 `@Bean` 메서드를 두어 외부 라이브러리 수동 등록 | • 싱글톤 보장(CGLIB 프록시 적용)을 통해 여러 번 호출해도 단 1개의 객체만 반환하도록 보장 |
+
+---
+
+### 3. 🏭 IoC 컨테이너(IoC Container)의 Bean 등록 및 스캔 동작 과정
+
+스프링 부트 애플리케이션이 켜질 때(`main()` 실행 시) 어떤 일이 일어날까요?
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Boot as SpringBootApplication 실행
+    participant Scanner as @ComponentScan
+    participant Container as ApplicationContext (IoC 컨테이너)
+    participant Memory as JVM 메모리 (Singleton Heap)
+
+    Boot->>Scanner: 1. 패키지 탐색 시작 (Component Scan)
+    Note over Scanner: 메인 클래스가 있는 패키지 및<br/>하위 폴더를 모조리 뒤짐
+    Scanner->>Container: 2. @Component 붙은 클래스 발견!<br/>(@Controller, @Service, @Repository 등)
+    Container->>Memory: 3. Reflection으로 객체를 딱 1개씩 생성 (new)
+    Note over Memory: 생성된 객체들을<br/>'Spring Bean'으로 저장소에 보관
+    Container->>Container: 4. @Autowired 탐색 후 의존성 자동 주입 (DI)
+    Note over Container: Controller ➔ Service ➔ Mapper<br/>조립 완료!
+```
+
+1. **`@ComponentScan` (자동 탐색)**:
+   * `@SpringBootApplication` 안에는 `@ComponentScan`이 내장되어 있습니다.
+   * 메인 클래스(`Study03Application`)가 위치한 패키지와 그 하위 폴더들을 전부 스캔하여 `@Component`, `@Controller`, `@Service`, `@Repository`가 붙은 클래스를 찾아냅니다.
+2. **Bean 생성 & 보관 (ApplicationContext)**:
+   * 스프링의 **IoC 컨테이너(`ApplicationContext`)**가 해당 클래스들을 리플렉션 기술로 인스턴스화(`new`)하여 **싱글톤(Singleton)**으로 보관합니다.
+3. **DI 주입**:
+   * 각 객체의 `@Autowired` 위치를 확인하고 필요한 Bean을 컨테이너에서 꺼내 쏙 꽂아줍니다.
+
+---
+
+## 🚨 7부. 실습 중 자주 겪는 4대 에러 & 해결 체크리스트
 
 1. **`NullPointerException` (컨트롤러에서 서비스 호출 시)**
    * **원인**: 컨트롤러에 `@Autowired private XxxService xxxService;` 주입이 누락되어 변수가 `null`인 상태로 메서드를 호출함
@@ -450,7 +528,7 @@ sequenceDiagram
 
 ---
 
-## 🚀 7부. GitHub 원격 저장소 동기화 (Git Push)
+## 🚀 8부. GitHub 원격 저장소 동기화 (Git Push)
 
 현재 작성된 모든 코드와 문서를 GitHub 저장소로 푸시하는 명령어입니다:
 
