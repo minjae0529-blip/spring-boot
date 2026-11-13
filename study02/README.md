@@ -10,7 +10,7 @@
 
 새로운 프로젝트를 만들 때 혼자서도 헤매지 않도록, 실제 IntelliJ 화면의 클릭 위치와 각 설정의 역할을 정리했습니다.
 
-![IntelliJ 프로젝트 생성 초기 설정 가이드](intellij_setup_guide.jpg)
+<img src="intellij_setup_guide.jpg" alt="IntelliJ 프로젝트 생성 초기 설정 가이드" width="100%">
 
 ### 🔴 IntelliJ 화면 번호별 클릭 위치 & 기능 이유
 
@@ -82,7 +82,7 @@ springdoc:
 
 스프링 부트 실무 개발은 **"가장 안쪽(DB)부터 바깥쪽(Controller/웹)"**으로 나오는 **6단계 순서**로 구현해야 의존성이 꼬이지 않고 컴파일 에러 없이 완성할 수 있습니다.
 
-![Spring Boot REST API 데이터 흐름 및 6단계 개발 로드맵](architecture_guide.jpg)
+<img src="architecture_guide.jpg" alt="Spring Boot REST API 데이터 흐름 및 6단계 개발 로드맵" width="100%">
 
 ### 🔄 데이터 라이프사이클 (순환 흐름도)
 
@@ -323,7 +323,113 @@ sequenceDiagram
 
 ---
 
-## 🚨 5부. 실습 중 자주 겪는 4대 에러 & 해결 체크리스트
+
+---
+
+## 🧠 5부. 스프링 핵심 원리: IoC, DI, 멀티스레드 완벽 정복
+
+스프링 부트가 내부적으로 어떻게 작동하고 왜 이렇게 설계되었는지를 이해하는 가장 중요한 핵심 이론입니다.
+
+### 1. 🔄 IoC (Inversion of Control, 제어의 역전)
+* **한 줄 정의**: **"내가 직접 객체를 `new` 하지 않고, 스프링(IoC 컨테이너)이 객체의 생성과 생명주기를 대신 관리하는 것!"**
+* **Before vs After 비교**:
+  * ❌ **기존 자바 (개발자가 제어)**:
+    ```java
+    public class CustomerController {
+        // 개발자가 직접 new로 생성 -> 결합도가 높아져 코드 수정이 어려움
+        private CustomerService customerService = new CustomerService();
+    }
+    ```
+  * ⭕ **스프링 IoC (스프링이 제어)**:
+    ```java
+    @RestController
+    public class CustomerController {
+        // 객체 생성 주도권이 스프링에 있음! 선언만 해두면 스프링이 주입해줌
+        @Autowired
+        private CustomerService customerService;
+    }
+    ```
+
+---
+
+### 2. 💉 DI (Dependency Injection, 의존성 주입)
+* **한 줄 정의**: **"IoC를 실제로 구현하는 방법으로, 스프링이 미리 만들어둔 객체(Bean)를 필요한 곳에 쏙 꽂아주는 것!"**
+* **종속성 주입 다이어그램**:
+
+```mermaid
+graph TD
+    Container["<b>Spring IoC Container</b><br/>(객체 보관소)"]
+    ServiceBean["<b>CustomerService Bean</b><br/>(미리 생성된 싱글톤 객체)"]
+    MapperBean["<b>CustomerMapper Bean</b><br/>(MyBatis 구현체)"]
+    
+    Controller["<b>CustomerController</b><br/>(@RestController)"]
+    Service["<b>CustomerService</b><br/>(@Service)"]
+    
+    Container -->|1. 싱글톤 관리| ServiceBean
+    Container -->|2. 싱글톤 관리| MapperBean
+    
+    ServiceBean -.->|@Autowired 주입 (DI)| Controller
+    MapperBean -.->|@Autowired 주입 (DI)| Service
+    
+    classDef container fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#ffffff;
+    classDef bean fill:#065f46,stroke:#34d399,stroke-width:2px,color:#ffffff;
+    classDef target fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#ffffff;
+    
+    class Container container;
+    class ServiceBean,MapperBean bean;
+    class Controller,Service target;
+```
+
+* **의존성 주입의 3가지 방식**:
+  1. **필드 주입 (`@Autowired`)**: 간편하지만 테스트와 변경이 어려움
+  2. **생성자 주입 (★실무 권장)**: 생성자를 통해 객체를 주입받아 불변성(`final`) 보장
+  3. **Lombok `@RequiredArgsConstructor`**: `private final XxxService service;` 로 생성자 주입 자동 완성
+
+---
+
+### 3. 🧵 멀티스레드(Multi-Thread) 동작 구조 & 싱글톤의 절대 규칙
+스프링 부트는 수천 명의 사용자가 동시에 요청을 보낼 때 **어떻게 처리할까요?**
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U1 as 사용자 1 (요청 A)
+    actor U2 as 사용자 2 (요청 B)
+    actor U3 as 사용자 3 (요청 C)
+    participant Tomcat as Tomcat Thread Pool<br/>(스레드 풀: 기본 200개)
+    participant Singleton as CustomerService<br/>(스프링 싱글톤 객체: 단 1개!)
+
+    U1->>Tomcat: HTTP GET 요청 1
+    Tomcat->>Singleton: [Thread 1] 할당되어 메서드 실행
+    U2->>Tomcat: HTTP POST 요청 2
+    Tomcat->>Singleton: [Thread 2] 할당되어 메서드 실행
+    U3->>Tomcat: HTTP GET 요청 3
+    Tomcat->>Singleton: [Thread 3] 할당되어 메서드 실행
+```
+
+* **작동 원리**:
+  1. **스레드 풀 (Tomcat Thread Pool)**:
+     * 스프링 부트 내장 톰캣은 미리 스레드(기본 최대 200개)를 만들어 두고 풀(Pool)에 보관합니다.
+     * 손님이 들어오면 놀고 있는 스레드를 하나 배정해서 컨트롤러와 서비스를 실행시킵니다.
+  2. **싱글톤(Singleton) 객체 공유**:
+     * `CustomerController`, `CustomerService` 같은 일꾼 객체는 **메모리에 단 1개만 생성**되어 모든 스레드가 공유합니다.
+  3. **★절대 규칙: 공유 필드(인스턴스 변수)에 개인 데이터를 저장하지 말 것!**:
+     ```java
+     @Service
+     public class CustomerService {
+         // ❌ 절대 금지! 모든 스레드가 이 변수를 공유해서 덮어씌워짐 (데이터 오염 발생)
+         private String currentUserName; 
+         
+         // ⭕ 올바른 방법: 메서드 안의 지역 변수나 DTO로 넘겨야 스레드별 독립 메모리(스택)를 씀
+         public void doSomething(CustomerCreateRequest request) {
+             String name = request.getName(); // Thread 안전!
+         }
+     }
+     ```
+
+---
+
+## 🚨 6부. 실습 중 자주 겪는 4대 에러 & 해결 체크리스트
 
 1. **`NullPointerException` (컨트롤러에서 서비스 호출 시)**
    * **원인**: 컨트롤러에 `@Autowired private XxxService xxxService;` 주입이 누락되어 변수가 `null`인 상태로 메서드를 호출함
@@ -344,7 +450,7 @@ sequenceDiagram
 
 ---
 
-## 🚀 6부. GitHub 원격 저장소 동기화 (Git Push)
+## 🚀 7부. GitHub 원격 저장소 동기화 (Git Push)
 
 현재 작성된 모든 코드와 문서를 GitHub 저장소로 푸시하는 명령어입니다:
 
